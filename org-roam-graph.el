@@ -126,43 +126,55 @@ The Org-roam database titles table is read, to obtain the list of titles.
 The links table is then read to obtain all directed links, and formatted
 into a digraph."
   (org-roam-db--ensure-built)
-  (org-roam--with-temp-buffer
-    (let* ((nodes (org-roam-db-query node-query))
-           (edges-query
-            `[:with selected :as [:select [file] :from ,node-query]
-              :select :distinct [to from] :from links
-              :where (and (in to selected) (in from selected))])
-           (edges (org-roam-db-query edges-query)))
-      (insert "digraph \"org-roam\" {\n")
-      (dolist (option org-roam-graph-extra-config)
-        (insert (concat (car option)
-                        "="
-                        (cdr option)
-                        ";\n")))
-      (dolist (node nodes)
-        (let* ((file (xml-escape-string (car node)))
-               (title (or (caadr node)
-                          (org-roam--path-to-slug file)))
-               (shortened-title (s-truncate org-roam-graph-max-title-length title))
-               (base-node-properties (list (cons "label" (s-replace "\"" "\\\"" shortened-title))
-                                           (cons "URL" (concat "org-protocol://roam-file?file="
-                                                               (url-hexify-string file)))
-                                           (cons "tooltip" (xml-escape-string title))))
-               (node-properties (append base-node-properties
-                                        org-roam-graph-node-extra-config)))
-          (insert
-           (format "  \"%s\" [%s];\n"
-                   file
-                   (->> node-properties
-                        (mapcar (lambda (n)
-                                  (concat (car n) "=" "\"" (cdr n) "\"")))
-                        (s-join ","))))))
-      (dolist (edge edges)
-        (insert (format "  \"%s\" -> \"%s\";\n"
-                        (xml-escape-string (car edge))
-                        (xml-escape-string (cadr edge)))))
-      (insert "}")
-      (buffer-string))))
+  (let ((current-file (ignore-errors (file-truename (buffer-file-name)))))
+    (org-roam--with-temp-buffer
+      (let* ((nodes (org-roam-db-query node-query))
+             (edges-query
+              `[:with selected :as [:select [file] :from ,node-query]
+                      :select :distinct [to from] :from links
+                      :where (and (in to selected) (in from selected))])
+             (edges (org-roam-db-query edges-query)))
+        (insert "digraph \"org-roam\" {\n")
+        (insert "
+  ranksep=\"0.4 equally\";
+  newrank=true;
+  concentrate=true;
+  ordering=out;
+  graph [splines=ortho];
+  /* use peripheries with zero penwidth to fake white border around node */
+  node [shape=box, style=filled, fillcolor=gray95, penwidth=0, peripheries=2,
+        fontname=\"IBM Plex Sans\", fontsize=11,
+        height=0.25];
+  edge [arrowsize=0.5, color=gray65];
+")
+
+        (dolist (node nodes)
+          (let* ((file (xml-escape-string (car node)))
+                 (title (or (caadr node)
+                            (org-roam--path-to-slug file)))
+                 (shortened-title (s-truncate org-roam-graph-max-title-length title))
+                 (base-node-properties (list (cons "label" (s-replace "\"" "\\\"" shortened-title))
+                                             (cons "URL" (concat "org-protocol://roam-file?file="
+                                                                 (url-hexify-string file)))
+                                             (cons "tooltip" (xml-escape-string title))))
+                 (selected (when (string-equal (car node) current-file)
+                             ;; '(("color" . "skyblue") ("penwidth" . "2") ("peripheries" "1"))
+                             '(("fillcolor" . "skyblue"))))
+                 (node-properties (append base-node-properties
+                                          selected)))
+            (insert
+             (format "  \"%s\" [%s];\n"
+                     file
+                     (->> node-properties
+                          (mapcar (lambda (n)
+                                    (concat (car n) "=" "\"" (cdr n) "\"")))
+                          (s-join ","))))))
+        (dolist (edge edges)
+          (insert (format "  \"%s\" -> \"%s\";\n"
+                          (xml-escape-string (car edge))
+                          (xml-escape-string (cadr edge)))))
+        (insert "}")
+        (buffer-string)))))
 
 (defun org-roam-graph-build (&optional node-query)
   "Generate a graph showing the relations between nodes in NODE-QUERY.
